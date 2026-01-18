@@ -1,0 +1,58 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "VMGuard Watcher (Debug – Clean Logs)",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "P:\\Scripts\\VMGuard\\watcher\\vm-watcher.ps1",
+      "args": [
+        "-DebugMode"
+      ],
+      "cwd": "P:\\Scripts\\VMGuard",
+      "createTemporaryIntegratedConsole": true,
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "VMGuard Watcher (Debug – VerboseFSW)",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "P:\\Scripts\\VMGuard\\watcher\\vm-watcher.ps1",
+      "args": [
+        "-DebugMode",
+        "-VerboseFSW"
+      ],
+      "cwd": "P:\\Scripts\\VMGuard",
+      "createTemporaryIntegratedConsole": true,
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "VMGuard: Helper (User)",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "P:/Scripts/VMGuard/guard/vm-smooth-shutdown.ps1"
+    },
+    {
+      "name": "VMGuard: Service Script (Admin Debug)",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "P:/Scripts/VMGuard/services/vmguard-service.ps1"
+    },
+    {
+      "name": "VMGuard: Stop Signal (Admin)",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "P:/Scripts/VMGuard/services/stop-signal.ps1"
+    },
+    {
+      "name": "VMGuard Reset State (Debug)",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "P:/Scripts/VMGuard/dev-harness/vmguard-reset-state.ps1",
+      "args": [
+        "-DebugMode"
+      ],
+      "cwd": "P:\\Scripts\\VMGuard"
+    }
+  ]
+}

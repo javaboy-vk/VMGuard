@@ -1,0 +1,29 @@
+# ================================
+# VMGuard – Git Ignore
+# ================================
+
+# Logs
+logs/
+Preshutdown_Sentinel/logs/
+
+# Build output
+**/bin/
+**/obj/
+
+# Runtime flags / state
+flags/*.debounce
+flags/*.state
+flags/*.lock
+
+# Windows noise
+Thumbs.db
+Desktop.ini
+
+# VS / VSCode
+.vs/
+*.user
+*.suo
+
+# Dotnet
+*.cache
+project.assets.json
