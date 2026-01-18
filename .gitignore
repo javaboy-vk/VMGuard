@@ -14,6 +14,7 @@ Preshutdown_Sentinel/logs/
 flags/*.debounce
 flags/*.state
 flags/*.lock
+diagnostics/
 
 # Windows noise
 Thumbs.db
@@ -23,7 +24,22 @@ Desktop.ini
 .vs/
 *.user
 *.suo
+vmguard-env-dump-*.txt
 
 # Dotnet
 *.cache
 project.assets.json
+
+
+# VMGuard runtime artifacts
+*.log
+*.txt
+diagnostics/
+logs/
+out/
+dist/
+bin/
+*.pid
+*.state
+*.lock
+.env

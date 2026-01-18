@@ -1,0 +1,47 @@
+{
+  "vmguard": {
+    "name": "VMGuard",
+    "version": "1.0",
+    "rootMode": "relative",
+    "environment": "HERCULES-ATLAS"
+  },
+
+  "paths": {
+    "logs": "logs",
+    "run": "run",
+    "diagnostics": "diagnostics",
+    "install": "install",
+    "devHarness": "dev-harness",
+    "services": "services",
+    "sentinel": "preshutdown_sentinel",
+    "guard": "guard",
+    "watcher": "watcher"
+  },
+
+  "services": {
+    "guardServiceName": "VMGuard-Guard",
+    "sentinelServiceName": "VMGuard-Preshutdown-Sentinel",
+    "logMergeServiceName": "VMGuard-LogMerge"
+  },
+
+  "scheduledTasks": {
+    "userShutdownTask": "VMGuard-User-Shutdown-Delegate",
+    "namespace": "\\Protepo\\VMGuard\\"
+  },
+
+  "kernelEvents": {
+    "guardStop": "Global\\VMGuard_Guard_Stop",
+    "systemStop": "Global\\VMGuard_STOP"
+  },
+
+  "logging": {
+    "defaultLevel": "Information",
+    "timestampFormat": "yyyy-MM-dd HH:mm:ss",
+    "separator": "==========================================="
+  },
+
+  "diagnostics": {
+    "environmentDumpPrefix": "vmguard-env-dump",
+    "retainDays": 30
+  }
+}
