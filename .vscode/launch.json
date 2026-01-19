@@ -36,13 +36,13 @@
       "name": "VMGuard: Service Script (Admin Debug)",
       "type": "PowerShell",
       "request": "launch",
-      "script": "P:/Scripts/VMGuard/services/vmguard-service.ps1"
+      "script": "P:/Scripts/VMGuard/guard/vmguard-service.ps1"
     },
     {
       "name": "VMGuard: Stop Signal (Admin)",
       "type": "PowerShell",
       "request": "launch",
-      "script": "P:/Scripts/VMGuard/services/stop-signal.ps1"
+      "script": "P:/Scripts/VMGuard/guard/vmguard-guard-stop-event-signal.ps1"
     },
     {
       "name": "VMGuard Reset State (Debug)",

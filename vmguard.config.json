@@ -5,7 +5,6 @@
     "rootMode": "relative",
     "environment": "HERCULES-ATLAS"
   },
-
   "paths": {
     "logs": "logs",
     "run": "run",
@@ -17,31 +16,53 @@
     "guard": "guard",
     "watcher": "watcher"
   },
-
   "services": {
-    "guardServiceName": "VMGuard-Guard",
-    "sentinelServiceName": "VMGuard-Preshutdown-Sentinel",
-    "logMergeServiceName": "VMGuard-LogMerge"
+    "guard": {
+      "name": "VMGuard-Guard",
+      "displayName": "VMGuard Guard Service",
+      "script": "guard\\vmguard-service.ps1",
+      "stopScript": "guard\\vmguard-guard-stop-event-signal.ps1"
+    },
+    "sentinel": {
+      "name": "VMGuard-Preshutdown-Sentinel",
+      "displayName": "VMGuard Preshutdown Sentinel"
+    },
+    "logMerge": {
+      "name": "VMGuard-LogMerge",
+      "displayName": "VMGuard LogMerge"
+    }
   },
-
-  "scheduledTasks": {
-    "userShutdownTask": "VMGuard-User-Shutdown-Delegate",
-    "namespace": "\\Protepo\\VMGuard\\"
+  "tasks": {
+    "userShutdown": {
+      "folder": "\\Protepo\\VMGuard",
+      "name": "VMGuard-User-Shutdown-Delegate",
+      "script": "guard\\vm-smooth-shutdown.ps1"
+    }
   },
-
-  "kernelEvents": {
+  "events": {
     "guardStop": "Global\\VMGuard_Guard_Stop",
     "systemStop": "Global\\VMGuard_STOP"
   },
-
-  "logging": {
-    "defaultLevel": "Information",
-    "timestampFormat": "yyyy-MM-dd HH:mm:ss",
-    "separator": "==========================================="
-  },
-
   "diagnostics": {
     "environmentDumpPrefix": "vmguard-env-dump",
     "retainDays": 30
+  },
+  "logging": {
+    "defaultLevel": "INFO",
+    "timestampFormat": "yyyy-MM-dd HH:mm:ss",
+    "separator": "===========================================",
+    "levelTokens": {
+      "INFO": "INFO",
+      "WARN": "WARN",
+      "ERROR": "ERROR"
+    },
+    "normalize": {
+      "Information": "INFO",
+      "Info": "INFO",
+      "Warning": "WARN",
+      "Warn": "WARN",
+      "Error": "ERROR",
+      "ERR": "ERROR"
+    }
   }
 }

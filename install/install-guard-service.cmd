@@ -3,7 +3,7 @@ REM ============================================================
 REM VMGuard Guard Service - INSTALL
 REM File: install-guard-service.cmd
 REM Author: javaboy-vk
-REM Version: 1.5
+REM Version: 1.6
 REM Date   : 2026-01-17
 REM
 REM PURPOSE:
@@ -37,7 +37,7 @@ REM install\ -> VMGuard\
 set VMGUARD_ROOT=%SCRIPT_DIR%..
 
 echo ===========================================
-echo  VMGuard Guard Service INSTALL v1.5
+echo  VMGuard Guard Service INSTALL v1.6
 echo  Root: %VMGUARD_ROOT%
 echo ===========================================
 

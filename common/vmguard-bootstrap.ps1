@@ -1,11 +1,11 @@
 <#
 ================================================================================
- VMGuard – Bootstrap Loader – v1.0
+ VMGuard – Bootstrap Loader – v1.1
 ================================================================================
  Script Name : vmguard-bootstrap.ps1
  Author      : javaboy-vk
- Date        : 2026-01-17
- Version     : 1.0
+ Date        : 2026-01-18
+ Version     : 1.1
 
  PURPOSE
    Establishes the canonical VMGuard runtime context.
@@ -18,7 +18,7 @@
 
  RESPONSIBILITIES
    1) Resolve VMGuard root directory dynamically
-   2) Load vmguard.config.json from \config
+   2) Load vmguard.config.json from VMGuard root (canonical)
    3) Validate presence of critical domains
    4) Expose canonical objects: $VMG, $VMGPaths, $VMGEvents, $VMGServices
    5) Provide helper utilities for path resolution
@@ -46,7 +46,9 @@ $Global:VMG_BOOTSTRAP_START = Get-Date
 
 try {
     $ScriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-    $Global:VMGuardRoot = Resolve-Path (Join-Path $ScriptRoot "..")
+
+    # Resolve-Path returns a PathInfo; normalize to a string path for Join-Path correctness
+    $Global:VMGuardRoot = (Resolve-Path (Join-Path $ScriptRoot "..")).Path
 }
 catch {
     Write-Host "FATAL: Unable to resolve VMGuard root." -ForegroundColor Red
@@ -57,7 +59,8 @@ catch {
 # 2. Central Configuration Load
 # ============================================================
 
-$Global:VMGuardConfigPath = Join-Path $VMGuardRoot "config\vmguard.config.json"
+# Canonical location: VMGuard root
+$Global:VMGuardConfigPath = Join-Path $VMGuardRoot "vmguard.config.json"
 
 if (-not (Test-Path $VMGuardConfigPath)) {
     Write-Host "FATAL: vmguard.config.json not found at: $VMGuardConfigPath" -ForegroundColor Red
@@ -115,10 +118,10 @@ function Resolve-VMGConfiguredPath {
 function Write-VMGBootstrapBanner {
 
     Write-Host "==========================================="
-    Write-Host " VMGuard Bootstrap Loader v1.0"
-    Write-Host " Root : $VMGuardRoot"
+    Write-Host " VMGuard Bootstrap Loader v1.1"
+    Write-Host " Root   : $VMGuardRoot"
     Write-Host " Config : $VMGuardConfigPath"
-    Write-Host " Time : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+    Write-Host " Time   : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     Write-Host "==========================================="
 }
 
