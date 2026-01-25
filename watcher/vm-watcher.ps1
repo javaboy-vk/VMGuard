@@ -4,7 +4,9 @@
 ================================================================================
 
  Author: javaboy-vk
- Version: 1.1
+ Version: 1.2.6
+ Date   : 2026-01-25
+
 ================================================================================
  THIS FILE IS BOTH CODE *AND* DOCUMENTATION
 ================================================================================
@@ -121,6 +123,41 @@
  6. DO NOT log per filesystem event in production
 
 ================================================================================
+ v1.2 CHANGE SUMMARY
+================================================================================
+ - Removes all hard-coded paths (portability compliance).
+ - Loads VMGuard root + central configuration via vmguard-bootstrap.ps1.
+ - Aligns logging bootstrap and startup banners with Guard portability model.
+
+ v1.2.1 CHANGE SUMMARY
+ - Clears stale Watcher stop event at startup to prevent immediate self-termination.
+
+ v1.2.2 CHANGE SUMMARY
+ - Updates documentation to match canonical config location:
+       VMGuard\conf\settings.json
+
+ v1.2.3 CHANGE SUMMARY
+ - Fixes invalid dynamic env var reference ($env:$VarName) by using
+   [Environment]::GetEnvironmentVariable(...) only.
+
+ v1.2.4 CHANGE SUMMARY
+ - Eliminates PSScriptAnalyzer "assigned but never used" warnings by:
+     - explicitly creating $LogsDir / $FlagsDir directories
+     - logging $LogsDir / $FlagsDir
+     - logging a lock-directory probe using $LockDirPath
+
+ v1.2.6 CHANGE SUMMARY
+ - VM identity resolved exclusively from env.properties (no runtime in settings.json)
+ - VM name derived from VMX path or VM directory when explicit name is absent
+
+ v1.2.5 CHANGE SUMMARY
+ - Eliminates "service starts then dies" when VM directory is missing/inaccessible
+   at startup by entering a STOP-responsive HOLD state:
+     - No polling loops
+     - No Start-Sleep calls
+     - No PowerShell execution on background threads
+   A C# Timer signals an AutoResetEvent that wakes the main loop to retry.
+================================================================================
 #>
 
 param(
@@ -136,54 +173,203 @@ param(
 )
 
 # ==============================================================================
-# SECTION 1 — CONFIGURATION
+# SECTION 0 — BOOTSTRAP (PORTABILITY ANCHOR + CONFIG LOADER)
+# ==============================================================================
+# VMGuard is directory-portable.
+# This script MUST NOT contain drive letters or fixed host paths.
+#
+# The VMGuard root is discovered from script self-location:
+#   watcher\vm-watcher.ps1  ->  VMGuard\
+#
+# Central configuration is loaded by vmguard-bootstrap.ps1 from the canonical
+# location:
+#   VMGuard\conf\settings.json
+#
+# IMPORTANT:
+#   The bootstrap loader is intentionally minimal.
+#   It owns only:
+#     - root resolution
+#     - config loading
+#     - exposure of $VMG / $VMGPaths / $VMGEvents / $VMGServices / $VMGRuntime
+#     - path helpers (Resolve-VMGPath)
+#
+# If bootstrap fails, the environment is invalid and Watcher MUST NOT proceed.
+
+$ScriptRoot  = Split-Path -Parent $MyInvocation.MyCommand.Path
+$VMGuardRoot = $null
+
+try {
+    $VMGuardRoot = (Resolve-Path (Join-Path $ScriptRoot "..")).Path
+} catch {
+    # Bootstrap failure means we cannot trust *anything* about the environment.
+    # Best-effort: write a single raw line to a default relative log location.
+    try {
+        $FallbackLog = Join-Path (Join-Path $ScriptRoot "..\logs") "vmguard.log"
+        New-Item -ItemType Directory -Force -Path (Split-Path $FallbackLog) | Out-Null
+        Add-Content -Path $FallbackLog -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [FATAL] Watcher unable to resolve VMGuard root: $_"
+    } catch {}
+    exit 1001
+}
+
+# ------------------------------------------------------------------------------
+# BOOTSTRAP PROOF-OF-LIFE
+# This MUST run before logging.ps1 is loaded.
+# If this does not appear in the log file, PowerShell never executed.
+#
+# NOTE:
+#   We intentionally write to VMGuardRoot\logs\vmguard.log here, even before
+#   vmguard-bootstrap.ps1 validates config. This is a forensic "did we run?"
+#   marker, not authoritative config-driven logging.
+# ------------------------------------------------------------------------------
+$BootstrapLogFile = Join-Path (Join-Path $VMGuardRoot "logs") "vmguard.log"
+try {
+    New-Item -ItemType Directory -Force -Path (Split-Path $BootstrapLogFile) | Out-Null
+    Add-Content -Path $BootstrapLogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - BOOTSTRAP: VMGuard Watcher entered PowerShell."
+} catch {}
+
+# Load canonical VMGuard bootstrap (root + config + path helpers)
+. (Join-Path $VMGuardRoot "common\vmguard-bootstrap.ps1")
+
+# ==============================================================================
+# SECTION 1 — CONFIGURATION (CANONICAL SETTINGS.JSON, NO HARDCODED PATHS)
 # ==============================================================================
 # This section contains ALL tunable values.
 # A junior developer should ONLY modify this section when adapting the script.
+#
+# IMPORTANT:
+#   VMGuard internal paths are ALWAYS relative to VMGuard root.
+#   Host-specific VM storage paths MUST NOT be embedded in settings.json.
+#
+# Canonical config keys (per settings.json):
+#   paths.logs
+#   paths.flags
+#   events.watcherStop
+#   services.watcher.eventSource
+#
+# Canonical host inputs (per conf\env.properties -> process env):
+#   VMGUARD_ATLAS_VM_DIR
+#   VMGUARD_ATLAS_VMX_PATH
+#   VMGUARD_ATLAS_VM_NAME (optional)
 
-$VmName = "AtlasW19"
+# --------------------------------------------------------------------------
+# 1.1 Logging formatting policy (config-driven)
+# --------------------------------------------------------------------------
+$TimestampFormat = $VMG.logging.timestampFormat
+if (-not $TimestampFormat) { $TimestampFormat = "yyyy-MM-dd HH:mm:ss" }
 
-# Directory where VMware stores the VM files
-$VmDir  = "P:\VMs\AtlasW19"
+$Separator = $VMG.logging.separator
+if (-not $Separator) { $Separator = "===========================================" }
+
+# --------------------------------------------------------------------------
+# 1.2 VM target identity (REQUIRED)
+# --------------------------------------------------------------------------
+# Watcher must know:
+#   - VM name (for flag naming + lock directory name)
+#   - VM directory (host path where VM files reside)
+#
+# IMPORTANT:
+#   Host-specific paths live ONLY in conf\env.properties.
+#   settings.json must not carry absolute paths or runtime identity.
+
+function Get-VMGEnvValue {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $v = [Environment]::GetEnvironmentVariable($Name, "Process")
+    if (-not $v) { $v = [Environment]::GetEnvironmentVariable($Name, "Machine") }
+    if ([string]::IsNullOrWhiteSpace($v)) { return $null }
+    return $v.Trim()
+}
+
+$VmDirEnvName = "VMGUARD_ATLAS_VM_DIR"
+$VmDir = Get-VMGEnvValue $VmDirEnvName
+
+$VmVmxEnvName = "VMGUARD_ATLAS_VMX_PATH"
+$VmVmx = Get-VMGEnvValue $VmVmxEnvName
+
+$VmNameEnvName = "VMGUARD_ATLAS_VM_NAME"
+$VmName = Get-VMGEnvValue $VmNameEnvName
+
+if (-not $VmName) {
+    if ($VmVmx) { $VmName = [System.IO.Path]::GetFileNameWithoutExtension($VmVmx) }
+    elseif ($VmDir) { $VmName = Split-Path -Leaf $VmDir }
+}
+
+if (-not $VmName) {
+    try {
+        Add-Content -Path $BootstrapLogFile -Value "$(Get-Date -Format $TimestampFormat) [FATAL] VM name not resolved. Set env var '$VmNameEnvName' or provide '$VmVmxEnvName'."
+    } catch {}
+    exit 1010
+}
+
+if (-not $VmDir) {
+    try {
+        Add-Content -Path $BootstrapLogFile -Value "$(Get-Date -Format $TimestampFormat) [FATAL] VM directory not resolved. Set env var '$VmDirEnvName' in conf\\env.properties."
+    } catch {}
+    exit 1012
+}
 
 # VMware runtime indicator:
 # IMPORTANT: This is a DIRECTORY, not a file.
 $LockDirPath = Join-Path $VmDir "$VmName.vmdk.lck"
 
-# VMGuard base directory
-$BaseDir  = "P:\Scripts\VMGuard"
+# --------------------------------------------------------------------------
+# 1.3 VMGuard internal runtime paths (CONFIG-DRIVEN, ROOT-RELATIVE)
+# --------------------------------------------------------------------------
+# Logging and flags MUST live under VMGuard root (portable).
+
+$LogsDir  = $null
+$FlagsDir = $null
+
+# Resolve-VMGPath is a bootstrap helper that returns an absolute path anchored
+# to the VMGuard root, based on config-relative paths.
+if ($VMGPaths -and $VMGPaths.logs)  { $LogsDir  = Resolve-VMGPath $VMGPaths.logs }
+if ($VMGPaths -and $VMGPaths.flags) { $FlagsDir = Resolve-VMGPath $VMGPaths.flags }
+
+# If the config omits these keys, we fail closed rather than quietly diverge.
+# Watcher must match Guard-level determinism and directory doctrine.
+if (-not $LogsDir) {
+    try { Add-Content -Path $BootstrapLogFile -Value "$(Get-Date -Format $TimestampFormat) [FATAL] Missing config: paths.logs" } catch {}
+    exit 1013
+}
+if (-not $FlagsDir) {
+    try { Add-Content -Path $BootstrapLogFile -Value "$(Get-Date -Format $TimestampFormat) [FATAL] Missing config: paths.flags" } catch {}
+    exit 1013
+}
 
 # Single shared log file used by all VMGuard components
-$LogFile  = "$BaseDir\logs\vmguard.log"
+$LogFile  = Join-Path $LogsDir "vmguard.log"
 
 # Flag file created when VM is running
-$FlagFile = "$BaseDir\flags\${VmName}_running.flag"
+$FlagFile = Join-Path $FlagsDir "${VmName}_running.flag"
 
-# Named Windows kernel event used by the service wrapper to stop this script
-$ServiceStopEventName = "Global\VMGuard_Watcher_Stop"
+# --------------------------------------------------------------------------
+# 1.4 STOP event (CANONICAL KEY)
+# --------------------------------------------------------------------------
+# Named Windows kernel event used by the service wrapper to stop this script.
+$ServiceStopEventName = $VMG.events.watcherStop
+if (-not $ServiceStopEventName) {
+    # Portable fallback (non-path) if config key is absent.
+    $ServiceStopEventName = "Global\VMGuard_Watcher_Stop"
+}
 
+# --------------------------------------------------------------------------
+# 1.5 Event Log Source (CANONICAL KEY)
+# --------------------------------------------------------------------------
 # Windows Application Event Log source name
-$EventSource = "VMGuard-Watcher"
+$EventSource = $VMG.services.watcher.eventSource
+if (-not $EventSource) {
+    $EventSource = "VMGuard-Watcher"
+}
 
-# Heartbeat:
-# Periodic log entry proving the watcher is alive
+# --------------------------------------------------------------------------
+# 1.6 Heartbeat + debounce
+# --------------------------------------------------------------------------
 $HeartbeatMinutes    = 5
 $HeartbeatIntervalMs = $HeartbeatMinutes * 60 * 1000
 
 # Debounce window:
 # Time to wait after filesystem activity before evaluating VM state
 $StateStabilizationMs = 1500
-
-# --------------------------------------------------------------------------
-# BOOTSTRAP PROOF-OF-LIFE
-# This MUST run before logging.ps1 is loaded.
-# If this does not appear in the log file, PowerShell never executed.
-# --------------------------------------------------------------------------
-try {
-    New-Item -ItemType Directory -Force -Path (Split-Path $LogFile) | Out-Null
-    Add-Content -Path $LogFile -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') 
-                    - BOOTSTRAP: VMGuard Watcher entered PowerShell."
-} catch {}
 
 # ==============================================================================
 # SECTION 2 — WINDOWS EVENT LOG INITIALIZATION
@@ -206,10 +392,22 @@ try {
 # logging.ps1 defines Write-Log, which:
 #   - writes to the shared log file
 #   - writes to the Windows Application Event Log
+#
+# IMPORTANT:
+#   Portable logging requires that logging.ps1 bind to the VMGuard root at runtime.
+#   The Guard portability model uses global variables as the handoff contract.
 
-. "$BaseDir\common\logging.ps1"
+$Global:VMGuardBaseDir = $VMGuardRoot
+$Global:VMGuardLogFile = $LogFile
+$Global:VMGuardSource  = $EventSource
 
-# Ensure required directories exist
+. (Join-Path $VMGuardRoot "common\logging.ps1")
+
+# Ensure required directories exist (explicitly use config-materialized dirs)
+New-Item -ItemType Directory -Force -Path $LogsDir  | Out-Null
+New-Item -ItemType Directory -Force -Path $FlagsDir | Out-Null
+
+# Preserve legacy Split-Path directory assertions (harmless redundancy)
 New-Item -ItemType Directory -Force -Path (Split-Path $LogFile)  | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $FlagFile) | Out-Null
 
@@ -218,10 +416,21 @@ New-Item -ItemType Directory -Force -Path (Split-Path $FlagFile) | Out-Null
 # ==============================================================================
 # A visible separator helps operators visually identify restarts.
 
-Write-Log "==========================================="
+Write-Log $Separator
 Write-Log "VMGuard Watcher starting (SYSTEM context)."
+Write-Log "Version                : 1.2.6"
+Write-Log "VMGuard root           : $VMGuardRoot"
+Write-Log "Config path            : $VMGuardConfigPath"
+Write-Log "VM name                : $VmName"
 Write-Log "VM directory           : $VmDir"
+Write-Log "VM dir env var         : $VmDirEnvName"
+Write-Log "Logs directory         : $LogsDir"
+Write-Log "Flags directory        : $FlagsDir"
 Write-Log "Runtime lock directory : $LockDirPath"
+Write-Log "Lock dir probe (exists): $(Test-Path -LiteralPath $LockDirPath)"
+Write-Log "Log file               : $LogFile"
+Write-Log "Flag file              : $FlagFile"
+Write-Log "STOP event             : $ServiceStopEventName"
 Write-Log "Heartbeat interval     : $HeartbeatMinutes minute(s)"
 Write-Log "Debounce window        : ${StateStabilizationMs}ms"
 Write-Log "VerboseFSW             : $VerboseFSW"
@@ -242,12 +451,38 @@ if ($DebugMode) {
 # SECTION 6 — SERVICE STOP SIGNAL
 # ==============================================================================
 # This kernel object allows the service wrapper to stop the script cleanly.
+#
+# IMPORTANT:
+#   This is a *service-local* stop event (events.watcherStop), NOT the sacred
+#   system-wide STOP (events.systemStop).
+#
+#   Because this is a named ManualReset event, it can remain signaled across
+#   process lifetimes. If it is already signaled at startup, WaitAny() would
+#   return immediately and the watcher would "start then instantly stop."
+#
+# Therefore:
+#   - Detect stale signaled state at startup
+#   - Clear it once (Reset)
+#   - Log the corrective action (forensics)
 
 $stopEvent = New-Object System.Threading.EventWaitHandle(
     $false,
     [System.Threading.EventResetMode]::ManualReset,
     $ServiceStopEventName
 )
+
+# ---- STALE STOP EVENT CLEAR (SERVICE-LOCAL ONLY) ----
+try {
+    if ($stopEvent.WaitOne(0)) {
+        Write-Log "[WARN] STOP event was already signaled at startup. Clearing stale state: $ServiceStopEventName"
+        $stopEvent.Reset() | Out-Null
+        Write-Log "[WARN] STOP event stale state cleared. Watcher will proceed."
+    }
+} catch {
+    # Failure to probe/reset is unusual but not fatal.
+    # Worst case: watcher exits immediately and logs will show why.
+    Write-Log "[WARN] Unable to probe/reset STOP event state: $($_.Exception.Message)"
+}
 
 # ==============================================================================
 # SECTION 7 — INITIAL STATE RECONCILIATION
@@ -277,6 +512,11 @@ $fsSignal        = New-Object System.Threading.AutoResetEvent($false)
 $heartbeatSignal = New-Object System.Threading.AutoResetEvent($false)
 $debounceSignal  = New-Object System.Threading.AutoResetEvent($false)
 
+# NEW in v1.2.6:
+# This signal wakes the main loop to re-check VM directory readiness without
+# polling loops or Start-Sleep.
+$vmDirRetrySignal = New-Object System.Threading.AutoResetEvent($false)
+
 $debounceLock      = New-Object System.Object
 $debounceScheduled = $false
 
@@ -290,9 +530,11 @@ $debounceScheduled = $false
 #   - listens for filesystem events
 #   - triggers heartbeats
 #   - arms the debounce timer
+#   - triggers VM directory readiness retry ticks
 #   - ONLY signals kernel objects
 
-Add-Type -Language CSharp -TypeDefinition @"
+try {
+    Add-Type -Language CSharp -TypeDefinition @"
 using System;
 using System.Collections.Concurrent;
 using System.IO;
@@ -305,8 +547,10 @@ public sealed class VmGuardBridge : IDisposable
     private readonly AutoResetEvent _fsSignal;
     private readonly AutoResetEvent _heartbeatSignal;
     private readonly AutoResetEvent _debounceSignal;
+    private readonly AutoResetEvent _vmDirRetrySignal;
     private readonly Timer _heartbeatTimer;
     private readonly Timer _debounceTimer;
+    private readonly Timer _vmDirRetryTimer;
 
     public VmGuardBridge(
         string path,
@@ -314,14 +558,21 @@ public sealed class VmGuardBridge : IDisposable
         AutoResetEvent fsSignal,
         AutoResetEvent heartbeatSignal,
         AutoResetEvent debounceSignal,
+        AutoResetEvent vmDirRetrySignal,
         int heartbeatIntervalMs,
-        int debounceMs)
+        int debounceMs,
+        int vmDirRetryIntervalMs)
     {
         _queue = queue;
         _fsSignal = fsSignal;
         _heartbeatSignal = heartbeatSignal;
         _debounceSignal = debounceSignal;
+        _vmDirRetrySignal = vmDirRetrySignal;
 
+        // IMPORTANT:
+        // FileSystemWatcher throws immediately if 'path' does not exist.
+        // Therefore, Watcher MUST validate path readiness in PowerShell BEFORE
+        // constructing this bridge.
         _fsw = new FileSystemWatcher(path, "*");
         _fsw.IncludeSubdirectories = true;
         _fsw.NotifyFilter =
@@ -344,6 +595,15 @@ public sealed class VmGuardBridge : IDisposable
                                    null,
                                    Timeout.Infinite,
                                    Timeout.Infinite);
+
+        // NEW:
+        // VM directory readiness retry ticks.
+        // This allows Watcher to stay alive deterministically if the VM storage
+        // volume is not available at service start time.
+        _vmDirRetryTimer = new Timer(_ => _vmDirRetrySignal.Set(),
+                                     null,
+                                     vmDirRetryIntervalMs,
+                                     vmDirRetryIntervalMs);
     }
 
     private void OnFsEvent(object sender, FileSystemEventArgs e)
@@ -367,31 +627,103 @@ public sealed class VmGuardBridge : IDisposable
     {
         try { _heartbeatTimer.Dispose(); } catch {}
         try { _debounceTimer.Dispose(); } catch {}
+        try { _vmDirRetryTimer.Dispose(); } catch {}
         try { _fsw.Dispose(); } catch {}
     }
 }
 "@
+} catch {
+    Write-Log "[FATAL] C# bridge compilation failed: $($_.Exception.Message)"
+    Write-Log $Separator
+    exit 1030
+}
 
 # ==============================================================================
-# SECTION 10 — BRIDGE INITIALIZATION
+# SECTION 10 — VM DIRECTORY READINESS HOLD (NO POLLING, NO SLEEP)
+# ==============================================================================
+# Services may start before storage volumes, mappings, or permissions settle.
+#
+# Prior behavior:
+#   - Validate VM dir once
+#   - Exit fatal if missing
+#
+# Problem:
+#   - Procrun treats exit as "service died"
+#   - SCM marks service failed even though the environment might become valid
+#     seconds later (e.g. delayed disk / delayed mount)
+#
+# Solution (v1.2.6):
+#   - If VM directory is missing at startup, enter a HOLD state.
+#   - HOLD state is STOP-responsive and blocks on kernel objects only.
+#   - A C# Timer wakes the loop to retry.
+#
+# This preserves the "no polling loop / no Start-Sleep" doctrine:
+#   - We never busy-spin
+#   - We never sleep blindly
+#   - We wait on kernel objects (deterministic idle)
+
+$VmDirRetryIntervalMs = 30000  # 30 seconds retry tick (operator-friendly)
+
+if (-not (Test-Path -LiteralPath $VmDir)) {
+
+    Write-Log "[ERROR] VM directory not available at startup: $VmDir"
+    Write-Log "        Entering HOLD state. Will retry every $([int]($VmDirRetryIntervalMs/1000))s."
+    Write-Log "        STOP event will terminate immediately: $ServiceStopEventName"
+
+    $holdHandles = @(
+        $stopEvent,
+        $vmDirRetrySignal
+    )
+
+    while (-not (Test-Path -LiteralPath $VmDir)) {
+
+        $holdIndex = [System.Threading.WaitHandle]::WaitAny($holdHandles)
+
+        if ($holdIndex -eq 0) {
+            Write-Log $Separator
+            Write-Log "STOP SIGNAL RECEIVED during VM directory HOLD. Shutting down."
+            Write-Log $Separator
+            exit 0
+        }
+
+        # holdIndex 1 = retry tick
+        Write-Log "[WARN] VM directory still not available: $VmDir"
+    }
+
+    Write-Log "[INFO] VM directory became available. Proceeding with initialization."
+}
+
+# ==============================================================================
+# SECTION 11 — BRIDGE INITIALIZATION
 # ==============================================================================
 # IMPORTANT:
 # Constructor arguments MUST be passed via -ArgumentList in PowerShell.
 
-$bridge = New-Object VmGuardBridge -ArgumentList @(
-    $VmDir,
-    $fsQueue,
-    $fsSignal,
-    $heartbeatSignal,
-    $debounceSignal,
-    $HeartbeatIntervalMs,
-    $StateStabilizationMs
-)
+$bridge = $null
+
+try {
+    $bridge = New-Object VmGuardBridge -ArgumentList @(
+        $VmDir,
+        $fsQueue,
+        $fsSignal,
+        $heartbeatSignal,
+        $debounceSignal,
+        $vmDirRetrySignal,
+        $HeartbeatIntervalMs,
+        $StateStabilizationMs,
+        $VmDirRetryIntervalMs
+    )
+} catch {
+    Write-Log "[FATAL] Bridge initialization failed: $($_.Exception.Message)"
+    Write-Log "        VmDir='$VmDir'  (exists=$(Test-Path -LiteralPath $VmDir))"
+    Write-Log $Separator
+    exit 1031
+}
 
 Write-Log "Watcher initialized. Awaiting events."
 
 # ==============================================================================
-# SECTION 11 — MAIN EVENT LOOP (ONLY PLACE POWERSHELL LOGIC RUNS)
+# SECTION 12 — MAIN EVENT LOOP (ONLY PLACE POWERSHELL LOGIC RUNS)
 # ==============================================================================
 # This loop:
 #   - blocks on kernel objects
@@ -410,6 +742,7 @@ while ($true) {
     $index = [System.Threading.WaitHandle]::WaitAny($handles)
 
     if ($index -eq 0) {
+        Write-Log $Separator
         Write-Log "STOP SIGNAL RECEIVED. Shutting down."
         break
     }
@@ -469,16 +802,22 @@ while ($true) {
 }
 
 # ==============================================================================
-# SECTION 12 — CLEAN SHUTDOWN
+# SECTION 13 — CLEAN SHUTDOWN
 # ==============================================================================
 # Always dispose unmanaged resources before exiting.
 
 try {
-    $bridge.Dispose()
+    if ($bridge) {
+        $bridge.Dispose()
+    }
     Write-Log "VMGuard Watcher exited cleanly."
+    Write-Log $Separator
 }
 catch {
     Write-Log "ERROR during shutdown: $_"
+    Write-Log $Separator
 }
 
 exit 0
+
+

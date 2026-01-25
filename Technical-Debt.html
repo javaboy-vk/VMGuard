@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VMGuard Technical Debt Inventory</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+        line-height: 1.55;
+        margin: 32px;
+        color: #1a1a1a;
+        background: #ffffff;
+      }
+      h1, h2, h3 {
+        margin: 0 0 12px 0;
+      }
+      h1 {
+        font-size: 24px;
+      }
+      h2 {
+        font-size: 18px;
+        margin-top: 24px;
+      }
+      h3 {
+        font-size: 15px;
+        margin-top: 16px;
+      }
+      p {
+        margin: 0 0 12px 0;
+      }
+      ul {
+        margin: 0 0 16px 18px;
+        padding: 0;
+      }
+      li {
+        margin: 6px 0;
+      }
+      code {
+        font-family: Consolas, "Courier New", monospace;
+        background: #f4f4f4;
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+      .note {
+        background: #f7f9fb;
+        border: 1px solid #e3e7eb;
+        padding: 12px 14px;
+        border-radius: 6px;
+      }
+      .sources {
+        color: #4b5563;
+        font-size: 13px;
+      }
+\n      .deprecated .sources {\n        color: #b45309;\n      }\n  .keep-block {\n        border: 2px solid #2563eb;\n        background: #eff6ff;\n        padding: 12px 14px;\n        border-radius: 8px;\n        margin: 0 0 16px 0;\n      }\n      .keep-block h3 {\n        color: #1d4ed8;\n        margin-top: 0;\n      }\n  .meta {\n        color: #475569;\n        font-size: 13px;\n        margin: 0 0 12px 0;\n      }\n</style>
+  </head>
+  <body>
+    <h1>VMGuard Kernel Events and Scheduled Tasks</h1>
+    <p class="meta">Version: 1.0</p>
+    <p>
+      Here's the complete list from the repo of kernel event names and Protepo scheduled task names
+      that VMGuard files create, open, trigger, query, or delete.
+    </p>
+    <p class="note">
+      Source links open in a VSCode-styled viewer. If you open this file directly via <code>file://</code>,
+      use VSCode Live Preview or Live Server so the viewer can load local files.
+    </p>
+
+            <h2>Kernel Events (Named EventWaitHandle)</h2>
+    <ul>
+      <li>
+        <code>Global\VMGuard_Guard_Stop</code>
+        (default Guard stop event; created/opened by Guard service and used by dev harness/tools)
+        <div class="sources">vmguard-service.ps1, vmguard-healthcheck.ps1, vmguard-manual-stop.ps1, vmguard-guard-stop-event-signal.ps1, settings.json</div>
+      </li>
+      <li>
+        <code>Global\VMGuard-STOP</code>
+        (Guard stop alias)
+        <div class="sources">vmguard-service.ps1, vmguard-guard-stop-event-signal.ps1</div>
+      </li>
+      <li>
+        <code>Global\VMGuard_Stop</code>
+        (Guard stop alias)
+        <div class="sources">vmguard-service.ps1, vmguard-guard-stop-event-signal.ps1</div>
+      </li>
+      <li>
+        <code>Global\VMGuardStop</code>
+        (Guard stop alias)
+        <div class="sources">vmguard-service.ps1, vmguard-guard-stop-event-signal.ps1</div>
+      </li>
+      <li>
+        <code>Global\VMGuard_Watcher_Stop</code>
+        (default Watcher stop event; created/opened by watcher)
+        <div class="sources">vm-watcher.ps1, install-watcher-service.ps1, settings.json</div>
+      </li>
+      <li>
+        <code>Global\VMGuard_STOP</code>
+        (system-wide stop event name in settings; referenced as config value)
+        <div class="sources">settings.json</div>
+      </li>
+    </ul>
+
+    <div class="note">
+      <h3>Config-driven overrides</h3>
+      <ul>
+        <li>
+          Guard stop event can be overridden via
+          <code>vmguard.stop.eventName</code> / <code>stop.eventName</code> / <code>StopEventName</code>
+          in settings files or env overlays.
+          <div class="sources">vmguard-service.ps1</div>
+        </li>
+        <li>
+          Watcher stop event uses <code>tasks.events.watcherStop</code> from settings if present.
+          <div class="sources">vm-watcher.ps1</div>
+        </li>
+      </ul>
+    </div>
+
+            <h2>Protepo Scheduled Tasks (Create/Query/Delete/Run)</h2>
+
+    <div class="keep-block">
+      <h3>Tasks to Keep</h3>
+      <ul>
+        <li>
+          <code>"\\Protepo\\VMGuard-Guard-User"</code>
+          (user shutdown scheduled task; created by install, validated/removed on uninstall)
+          <div class="sources">settings.json, install-guard-service.ps1, uninstall-all.cmd, uninstall-guard-service.cmd</div>
+        </li>
+        <li>
+          <code>"\\Protepo\\VMGuard-HostShutdown-Interceptor"</code>
+          (host shutdown interceptor task)
+          <div class="sources">settings.json, install-guard-service.ps1, uninstall-all.cmd, uninstall-vmguard-host-shutdown-interceptor.cmd</div>
+        </li>
+      </ul>
+    </div>
+
+    <h3>Tasks to Remove</h3>
+    <ul>
+      <li>
+        <s><s><code>"\\\\Protepo\\\\VMGuard\\\\VMGuard-HostShutdown-Interceptor"</code></s></s>
+        (alternate task path; delete/check)
+        <div class="sources">uninstall-vmguard-host-shutdown-interceptor.cmd</div>      </li>
+      <li>
+        <code>"VMGuard-HostShutdown-Interceptor"</code>
+        (legacy task name; delete/check)
+        <div class="sources">uninstall-vmguard-host-shutdown-interceptor.cmd</div>
+      </li>
+      <li>
+        <code>"\\Protepo\\VMGuard\\VMGuard-User-Shutdown-Delegate"</code>(legacy user task; removed on uninstall)
+        <div class="sources">uninstall-all.cmd, uninstall-guard-service.cmd</div>
+      </li>
+      <li>
+        <code>"VMGuard-User-Shutdown-Delegate"</code>
+        (legacy short name; removed on uninstall)
+        <div class="sources">uninstall-guard-service.cmd</div>
+      </li>
+      <li>
+        <code>"\\Protepo\\VMGuard-User-Shutdown-Delegate"</code>
+        (alternate legacy path; removed on uninstall)
+        <div class="sources">uninstall-guard-service.cmd</div>
+      </li>
+    </ul>
+  </body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

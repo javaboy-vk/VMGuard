@@ -1,58 +1,224 @@
 <#
 ================================================================================
- VMGuard – Developer Control Panel – v1.10
+ VMGuard – Developer Control Panel – v1.14
 ================================================================================
  Script Name : vmguard-dev-menu.ps1
  Author      : javaboy-vk
- Date        : 2026-01-14
- Version     : 1.10
+ Date        : 2026-01-25
+ Version     : 1.14
 
  PURPOSE
    Central control panel for VMGuard dev harness and architecture tooling.
 
- v1.10 CHANGE
-   - Normalized Host Shutdown Interceptor under \Protepo namespace
-   - Added full host interceptor task dump option
-   - Added VMGuard scheduled-task sweep option
+ v1.14 CHANGE
+   - Resolve VM name from env.properties when runtime is absent in settings.json
 
- v1.9 CHANGE
-   - Added Host Shutdown Interceptor control plane
-   - Added scheduled-task management for host interceptor
-   - Architecture verification now classifies Host Interceptor plane
-   - Control-plane dump now includes host interceptor
-   - Added manual trigger and enable/disable support
+ v1.13 CHANGE
+   - Portability hardening:
+       * VMGuard root anchored from script location (no hard-coded P:\ paths)
+       * Optional config overlay from conf\env.properties + conf\settings.json
+         (also supports config\* and root for backward compatibility)
+       * BaseDir/HarnessDir/VmName resolve from config unless explicitly provided
+       * Host interceptor installer path is now root-relative
+   - Root resolution is non-fatal: if verification fails, WARN and continue.
 
- v1.8 CHANGE
-   - Removed "Press Enter to continue..." pausing behavior from options 8, 9, 11
-     (harness returns to menu immediately after completing the action).
-   - Upgraded architecture verification from fault detection to topology classification:
-       * ARCH-FAULT only for missing CORE components
-       * User shutdown task is OPTIONAL (WARN if missing)
-       * Emits architecture MODE and plane classification (Service/STOP/User).
-
- v1.7 CHANGE
-   - Added VMGuard Architecture Tools section
-   - Added scheduled-task repair capability
-   - Added architecture verification
-   - Added control-plane state dump
-
- v1.6 CHANGE
-   - Renamed Args parameter to PositionalArgs.
-   - Avoids collision with built-in PowerShell automatic variable $Args.
-   - Preserves named-parameter splatting and positional invocation model.
 ================================================================================
 #>
 
 param(
-    [string]$BaseDir    = 'P:\Scripts\VMGuard',
-    [string]$HarnessDir = 'P:\Scripts\VMGuard\dev-harness',
-    [string]$VmName     = 'AtlasW19'
+    # Optional overrides. If not provided, values are resolved from script location + config.
+    [string]$BaseDir    = $null,
+    [string]$HarnessDir = $null,
+    [string]$VmName     = $null
 )
+
+# ==============================================================================
+# PORTABLE ROOT + CONFIG (env.properties + settings.json) – best-effort
+# ==============================================================================
+function Import-VMGEnvProperties {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $props = @{}
+    foreach ($raw in (Get-Content -LiteralPath $Path -ErrorAction Stop)) {
+        $line = $raw.Trim()
+        if ($line.Length -eq 0) { continue }
+        if ($line.StartsWith('#')) { continue }
+        if ($line.StartsWith(';')) { continue }
+
+        $idx = $line.IndexOf('=')
+        if ($idx -lt 1) { continue }
+
+        $k = $line.Substring(0, $idx).Trim()
+        $v = $line.Substring($idx + 1).Trim()
+        if ($k.Length -gt 0) { $props[$k] = $v }
+    }
+    return $props
+}
+
+function Get-VMGJsonPathValue {
+    param(
+        [Parameter(Mandatory)][object]$Object,
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    $cur = $Object
+    foreach ($seg in ($Path -split '\.')) {
+        if ($null -eq $cur) { return $null }
+        if ($cur -is [System.Collections.IDictionary]) {
+            if (-not $cur.Contains($seg)) { return $null }
+            $cur = $cur[$seg]
+        } else {
+            $prop = $cur.PSObject.Properties[$seg]
+            if ($null -eq $prop) { return $null }
+            $cur = $prop.Value
+        }
+    }
+    return $cur
+}
+
+function Get-VMGSettingFirst {
+    param(
+        [object]$SettingsObject,
+        [hashtable]$EnvProps,
+        [string[]]$JsonCandidates,
+        [string[]]$EnvCandidates
+    )
+
+    foreach ($p in $JsonCandidates) {
+        if ($SettingsObject) {
+            $v = Get-VMGJsonPathValue -Object $SettingsObject -Path $p
+            if ($null -ne $v -and "$v".Trim().Length -gt 0) { return "$v".Trim() }
+        }
+    }
+
+    foreach ($k in $EnvCandidates) {
+        if ($EnvProps -and $EnvProps.ContainsKey($k)) {
+            $v = "$($EnvProps[$k])".Trim()
+            if ($v.Length -gt 0) { return $v }
+        }
+    }
+
+    return $null
+}
+
+function Resolve-VMGTargetVmName {
+    param(
+        [object]$Settings,
+        [hashtable]$EnvProps
+    )
+
+    $name = Get-VMGJsonPathValue -Object $Settings -Path 'runtime.targetVm.name'
+    if (-not [string]::IsNullOrWhiteSpace($name)) { return $name }
+
+    if ($EnvProps -and $EnvProps.ContainsKey('VMGUARD_ATLAS_VM_NAME')) {
+        $name = "$($EnvProps['VMGUARD_ATLAS_VM_NAME'])".Trim()
+        if ($name.Length -gt 0) { return $name }
+    }
+
+    if ($EnvProps -and $EnvProps.ContainsKey('VMGUARD_ATLAS_VMX_PATH')) {
+        $vmx = "$($EnvProps['VMGUARD_ATLAS_VMX_PATH'])".Trim()
+        if ($vmx.Length -gt 0) { return [System.IO.Path]::GetFileNameWithoutExtension($vmx) }
+    }
+
+    if ($EnvProps -and $EnvProps.ContainsKey('VMGUARD_ATLAS_VM_DIR')) {
+        $dir = "$($EnvProps['VMGUARD_ATLAS_VM_DIR'])".Trim()
+        if ($dir.Length -gt 0) { return Split-Path -Leaf $dir }
+    }
+
+    return $null
+}
+
+function Resolve-VMGMaybeRelativePath {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$PathValue
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PathValue)) { return $null }
+    if ([System.IO.Path]::IsPathRooted($PathValue)) { return $PathValue }
+    return (Join-Path $Root $PathValue)
+}
+
+# ==============================================================================
+# ROOT RESOLUTION (non-fatal)
+# ==============================================================================
+$SelfDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($SelfDir)) {
+    try { $SelfDir = Split-Path -Parent $PSCommandPath } catch {}
+}
+if ([string]::IsNullOrWhiteSpace($SelfDir)) {
+    $SelfDir = (Get-Location).Path
+}
+
+# Expected layout: <root>\dev-harness\vmguard-dev-menu.ps1
+$RootCandidate = $null
+try { $RootCandidate = (Resolve-Path (Join-Path $SelfDir "..")).Path } catch { $RootCandidate = $SelfDir }
+
+# Locate config
+$envCandidates = @(
+    (Join-Path $RootCandidate 'conf\env.properties'),
+    (Join-Path $RootCandidate 'config\env.properties'),
+    (Join-Path $RootCandidate 'env.properties')
+)
+$settingsCandidates = @(
+    (Join-Path $RootCandidate 'conf\settings.json'),
+    (Join-Path $RootCandidate 'config\settings.json'),
+    (Join-Path $RootCandidate 'settings.json')
+)
+
+$EnvPropsPath = $envCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+$SettingsPath = $settingsCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+$EnvProps = @{}
+if ($EnvPropsPath) {
+    try { $EnvProps = Import-VMGEnvProperties -Path $EnvPropsPath } catch { $EnvProps = @{} }
+}
+
+$Settings = $null
+if ($SettingsPath) {
+    try { $Settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json } catch { $Settings = $null }
+}
+
+# Resolve BaseDir (VMGuard root) from env/settings unless explicitly provided
+if (-not $BaseDir) {
+    $cfgRoot = Get-VMGSettingFirst -SettingsObject $Settings -EnvProps $EnvProps `
+        -JsonCandidates @('vmguard.root','vmguard.baseDir','baseDir','root') `
+        -EnvCandidates  @('VMGUARD_ROOT','VMGUARD_BASEDIR','BASEDIR')
+
+    if ($cfgRoot) { $BaseDir = Resolve-VMGMaybeRelativePath -Root $RootCandidate -PathValue $cfgRoot }
+    else          { $BaseDir = $RootCandidate }
+}
+
+# Verify root layout best-effort (non-fatal)
+$rootOk = $true
+foreach ($req in @('guard','install','common')) {
+    if (-not (Test-Path (Join-Path $BaseDir $req))) { $rootOk = $false }
+}
+if (-not $rootOk) {
+    Write-Host "[WARN] VMGuard root verification failed (expected guard/install/common under root)."
+    Write-Host "       Using BaseDir=$BaseDir anyway (non-fatal)."
+}
+
+# Resolve HarnessDir unless explicitly provided
+if (-not $HarnessDir) {
+    $cfgHarness = Get-VMGSettingFirst -SettingsObject $Settings -EnvProps $EnvProps `
+        -JsonCandidates @('paths.devHarness','vmguard.paths.devHarness','devHarnessDir') `
+        -EnvCandidates  @('VMGUARD_DEVHARNESS_DIR','DEVHARNESS_DIR')
+
+    if ($cfgHarness) { $HarnessDir = Resolve-VMGMaybeRelativePath -Root $BaseDir -PathValue $cfgHarness }
+    else             { $HarnessDir = (Join-Path $BaseDir 'dev-harness') }
+}
+
+# Resolve VmName unless explicitly provided
+if (-not $VmName) {
+    $cfgVm = Resolve-VMGTargetVmName -Settings $Settings -EnvProps $EnvProps
+    if ($cfgVm) { $VmName = $cfgVm }
+    else        { $VmName = 'AtlasW19' }
+}
 
 # ==============================================================================
 # CORE HARNESS INVOKER
 # ==============================================================================
-
 function Invoke-VMGuardScript {
     param(
         [Parameter(Mandatory)]
@@ -74,9 +240,8 @@ function Invoke-VMGuardScript {
 # ==============================================================================
 # HOST SHUTDOWN INTERCEPTOR TOOLS
 # ==============================================================================
-
 $HostInterceptorName = '\Protepo\VMGuard-HostShutdown-Interceptor'
-$HostInterceptorInstaller = 'P:\Scripts\VMGuard\install\install-vmguard-host-shutdown-interceptor.cmd'
+$HostInterceptorInstaller = Join-Path $BaseDir 'install\install-vmguard-host-shutdown-interceptor.cmd'
 
 function Invoke-VMGuardHostInterceptorStatus {
     Write-Host ''
@@ -148,7 +313,6 @@ function Invoke-VMGuardScheduledTaskSweep {
 # ==============================================================================
 # ARCHITECTURE TOOLS
 # ==============================================================================
-
 function Invoke-VMGuardTaskRepair {
 
     Write-Host ''
@@ -295,20 +459,22 @@ function Invoke-VMGuardControlPlaneDump {
 
     Write-Host ''
     Write-Host '--- Key Artifacts ---'
-    Get-Item "$BaseDir\guard\vmguard-service.ps1" -ErrorAction SilentlyContinue
-    Get-Item "$BaseDir\guard\vm-smooth-shutdown.ps1" -ErrorAction SilentlyContinue
-    Get-Item "$BaseDir\guard\vmguard-guard-stop-event-signal.ps1" -ErrorAction SilentlyContinue
-    Get-Item "$BaseDir\guard\vmguard-host-shutdown-interceptor.ps1" -ErrorAction SilentlyContinue
+    Get-Item (Join-Path $BaseDir 'guard\vmguard-service.ps1') -ErrorAction SilentlyContinue
+    Get-Item (Join-Path $BaseDir 'guard\vm-smooth-shutdown.ps1') -ErrorAction SilentlyContinue
+    Get-Item (Join-Path $BaseDir 'guard\vmguard-guard-stop-event-signal.ps1') -ErrorAction SilentlyContinue
+    Get-Item (Join-Path $BaseDir 'guard\vmguard-host-shutdown-interceptor.ps1') -ErrorAction SilentlyContinue
 }
 
 # ==============================================================================
 # MAIN MENU LOOP
 # ==============================================================================
-
 while ($true)
 {
     Write-Host ''
-    Write-Host 'VMGuard Developer Harness v1.10'
+    Write-Host 'VMGuard Developer Harness v1.14'
+    Write-Host '--------------------------------'
+    Write-Host "Root : $BaseDir"
+    Write-Host "VM   : $VmName"
     Write-Host '--------------------------------'
     Write-Host '1  - Health Check'
     Write-Host '2  - Reset State (target VM)'
@@ -361,3 +527,5 @@ while ($true)
         'Q'  { return }
     }
 }
+
+

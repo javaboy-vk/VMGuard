@@ -1,0 +1,85 @@
+{
+  "vmguard": {
+    "name": "VMGuard",
+    "version": "1.2",
+    "rootMode": "relative",
+    "environment": "HERCULES-ATLAS"
+  },
+  "paths": {
+    "conf": "conf",
+    "logs": "logs",
+    "run": "run",
+    "flags": "flags",
+    "diagnostics": "diagnostics",
+    "install": "install",
+    "devHarness": "dev-harness",
+    "services": "services",
+    "sentinel": "preshutdown_sentinel",
+    "guard": "guard",
+    "watcher": "watcher"
+  },
+  "services": {
+    "guard": {
+      "name": "VMGuard-Guard",
+      "displayName": "VMGuard Guard Service",
+      "script": "guard\\vmguard-service.ps1",
+      "stopScript": "guard\\vmguard-guard-stop.cmd"
+    },
+    "watcher": {
+      "name": "VMGuard-Watcher",
+      "displayName": "VMGuard Watcher Service",
+      "description": "VMGuard Watcher Service - Host watcher for AtlasW19; coordinates controlled guest shutdown via VMware vmrun during VMGuard STOP convergence.",
+      "script": "watcher\\vm-watcher.ps1",
+      "stopScript": "watcher\\vmguard-watcher-stop.cmd",
+      "eventSource": "VMGuard-Watcher"
+    },
+    "sentinel": {
+      "name": "VMGuard-Preshutdown-Sentinel",
+      "displayName": "VMGuard Preshutdown Sentinel Service",
+      "description": "VMGuard preshutdown-tier sentinel that signals Guard STOP event early during host shutdown."
+    },
+    "logMerge": {
+      "name": "VMGuard-LogMerge",
+      "displayName": "VMGuard LogMerge"
+    }
+  },
+  "tasks": {
+    "tasks": {
+      "hostShutdownInterceptor": {
+        "uri": "\\Protepo\\VMGuard-HostShutdown-Interceptor"
+      },
+      "userShutdown": {
+        "folder": "\\Protepo",
+        "name": "VMGuard-Guard-User",
+        "script": "guard\\vm-smooth-shutdown.ps1"
+      }
+    },
+    "events": {
+      "guardStop": "Global\\VMGuard_Guard_Stop",
+      "watcherStop": "Global\\VMGuard_Watcher_Stop",
+      "systemStop": "Global\\VMGuard_STOP"
+    },
+    "diagnostics": {
+      "environmentDumpPrefix": "vmguard-env-dump",
+      "retainDays": 30
+    },
+    "logging": {
+      "defaultLevel": "INFO",
+      "timestampFormat": "yyyy-MM-dd HH:mm:ss",
+      "separator": "===========================================",
+      "levelTokens": {
+        "INFO": "INFO",
+        "WARN": "WARN",
+        "ERROR": "ERROR"
+      },
+      "normalize": {
+        "Information": "INFO",
+        "Info": "INFO",
+        "Warning": "WARN",
+        "Warn": "WARN",
+        "Error": "ERROR",
+        "ERR": "ERROR"
+      }
+    }
+  }
+}

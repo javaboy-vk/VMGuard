@@ -2,6 +2,23 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "VMGuard – Debug install-watcher-service.cmd",
+      "type": "node",
+      "request": "launch",
+
+      "program": "C:\\Windows\\System32\\cmd.exe",
+      "args": [
+        "/K",
+        "install-watcher-service.cmd"
+      ],
+
+      "cwd": "P:\\Scripts\\VMGuard\\install",
+
+      "console": "externalTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": []
+    },
+    {
       "name": "VMGuard Watcher (Debug – Clean Logs)",
       "type": "PowerShell",
       "request": "launch",

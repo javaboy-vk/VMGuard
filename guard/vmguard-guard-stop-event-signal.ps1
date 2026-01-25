@@ -1,11 +1,11 @@
 <#
 ================================================================================
- VMGuard – Guard STOP Event Signaler – v1.9
+ VMGuard – Guard STOP Event Signaler – v2.0
 ================================================================================
  Script Name : vmguard-guard-stop-event-signal.ps1
  Author      : javaboy-vk
- Date        : 2026-01-14
- Version     : 1.9
+ Date        : 2026-01-23
+ Version     : 2.0
 
  PURPOSE
    Provides a hardened STOP event signaling mechanism for the VMGuard Guard
@@ -40,6 +40,12 @@
    - Must tolerate missing kernel events without failing
    - Terminates immediately after best-effort signaling
 
+ v2.0:
+   - Portability: removed hard-coded root paths; resolves VMGuard root relative to script
+   - Config-driven: prefers conf\settings.json events.guardStop (+systemStop) as primary candidates
+   - Host inputs: best-effort import of conf\env.properties into process env
+   - Contract preserved: best-effort only; ALWAYS exits 0
+
  v1.9:
    - Added multi-alias STOP event support (mirrors Guard alias creation)
    - Added host shutdown context detection
@@ -65,45 +71,122 @@
 ================================================================================
 #>
 
-. "P:\Scripts\VMGuard\common\logging.ps1"
+# ==============================================================================
+# 0. Portability Bootstrap (Root + Logging) (v2.0)
+# ==============================================================================
+# Resolve VMGuard root from this script's location (guard\... -> root).
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$VMGuardRoot = Resolve-Path (Join-Path $ScriptDir "..")
+
+$LoggingPs1 = Join-Path $VMGuardRoot "common\logging.ps1"
+
+$script:HasWriteLog = $false
+if (Test-Path -LiteralPath $LoggingPs1) {
+    try {
+        . $LoggingPs1
+        $script:HasWriteLog = $true
+    } catch {
+        $script:HasWriteLog = $false
+    }
+}
+
+function Write-StopLog {
+    param([Parameter(Mandatory=$true)][string]$Message)
+    if ($script:HasWriteLog) {
+        try { Write-Log $Message } catch { Write-Host $Message }
+    } else {
+        Write-Host $Message
+    }
+}
 
 # ==============================================================================
-# 1. CONFIGURATION
+# 1. CONFIGURATION (v2.0: settings.json preferred; legacy aliases retained)
 # ==============================================================================
 # IMPORTANT:
-# These event names MUST exactly match those used inside vmguard-service.ps1.
-#
-# Guard currently creates a primary event and multiple aliases to increase
-# resilience across different signalers.
-#
-$StopEventNames = @(
+# This script MUST NEVER fail. All config reads are best-effort.
+# If config cannot be read, we fall back to legacy stop event aliases.
+
+function Import-VMGuardEnvProperties {
+    [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+
+    try {
+        $lines = Get-Content -LiteralPath $Path -ErrorAction Stop
+        foreach ($raw in $lines) {
+            $line = $raw.Trim()
+            if (-not $line) { continue }
+            if ($line.StartsWith("#") -or $line.StartsWith(";")) { continue }
+
+            $idx = $line.IndexOf("=")
+            if ($idx -lt 1) { continue }
+
+            $k = $line.Substring(0, $idx).Trim()
+            $v = $line.Substring($idx + 1).Trim()
+            if ([string]::IsNullOrWhiteSpace($k)) { continue }
+
+            Set-Item -Path ("Env:{0}" -f $k) -Value $v
+        }
+    } catch {
+        # Best-effort only
+        return
+    }
+}
+
+$EnvPropsPath = Join-Path $VMGuardRoot "conf\env.properties"
+Import-VMGuardEnvProperties -Path $EnvPropsPath
+
+$SettingsPath = Join-Path $VMGuardRoot "conf\settings.json"
+$cfg = $null
+try {
+    if (Test-Path -LiteralPath $SettingsPath) {
+        $cfg = Get-Content -Raw -LiteralPath $SettingsPath | ConvertFrom-Json
+    }
+} catch {
+    $cfg = $null
+}
+
+$primary = @()
+try {
+    if ($cfg -and $cfg.events -and $cfg.events.guardStop) { $primary += [string]$cfg.events.guardStop }
+    if ($cfg -and $cfg.events -and $cfg.events.systemStop) { $primary += [string]$cfg.events.systemStop }
+} catch {}
+
+# Legacy aliases retained for resilience across versions/signalers.
+$legacy = @(
     "Global\VMGuard_Guard_Stop",
     "Global\VMGuard-STOP",
     "Global\VMGuard_Stop",
     "Global\VMGuardStop"
 )
 
+$StopEventNames = @()
+foreach ($n in ($primary + $legacy)) {
+    if ([string]::IsNullOrWhiteSpace($n)) { continue }
+    $t = $n.Trim()
+    if (-not ($StopEventNames -contains $t)) { $StopEventNames += $t }
+}
 
 # ==============================================================================
 # 2. STARTUP / CONTEXT LOGGING
 # ==============================================================================
-Write-Log "==========================================="
-Write-Log "VMGuard Guard STOP event signaler invoked."
-Write-Log "Candidate stop events:"
-$StopEventNames | ForEach-Object { Write-Log "  - $_" }
+Write-StopLog "==========================================="
+Write-StopLog "VMGuard Guard STOP event signaler invoked."
+Write-StopLog "Candidate stop events:"
+$StopEventNames | ForEach-Object { Write-StopLog "  - $_" }
 
 # Attempt to infer shutdown context (best-effort only)
 try {
     $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
-    Write-Log "OS state snapshot: BootTime=$($os.LastBootUpTime), LocalTime=$($os.LocalDateTime)"
+    Write-StopLog "OS state snapshot: BootTime=$($os.LastBootUpTime), LocalTime=$($os.LocalDateTime)"
 }
 catch {
-    Write-Log "OS state snapshot unavailable (likely late shutdown phase)."
+    Write-StopLog "OS state snapshot unavailable (likely late shutdown phase)."
 }
 
-Write-Log "Purpose: best-effort release of Guard service STOP wait."
-Write-Log "==========================================="
-
+Write-StopLog "Purpose: best-effort release of Guard service STOP wait."
+Write-StopLog "==========================================="
 
 # ==============================================================================
 # 3. SIGNAL ATTEMPTS (BEST EFFORT BY DESIGN)
@@ -131,20 +214,19 @@ foreach ($eventName in $StopEventNames) {
         $null = $ev.Set()
         $signaled = $true
 
-        Write-Log "Guard stop event signaled successfully: $eventName"
+        Write-StopLog "Guard stop event signaled successfully: $eventName"
     }
     catch {
-        Write-Log "STOP signal attempt skipped: $eventName (not present or already released)"
+        Write-StopLog "STOP signal attempt skipped: $eventName (not present or already released)"
     }
 }
 
 if (-not $signaled) {
-    Write-Log "No STOP events were signaled. Likely causes:"
-    Write-Log "  - Guard service not started yet"
-    Write-Log "  - Guard service already terminated"
-    Write-Log "  - OS deep in shutdown and kernel objects unavailable"
+    Write-StopLog "No STOP events were signaled. Likely causes:"
+    Write-StopLog "  - Guard service not started yet"
+    Write-StopLog "  - Guard service already terminated"
+    Write-StopLog "  - OS deep in shutdown and kernel objects unavailable"
 }
-
 
 # ==============================================================================
 # 4. FINALIZATION / EXIT (GOLDEN RULE)
@@ -158,5 +240,5 @@ if (-not $signaled) {
 #   - Mark the service stop as failed
 #   - Interfere with system shutdown
 #
-Write-Log "vmguard-guard-stop-event-signal.ps1 exiting with code 0 (required for safe STOP signaling)."
+Write-StopLog "vmguard-guard-stop-event-signal.ps1 exiting with code 0 (required for safe STOP signaling)."
 exit 0

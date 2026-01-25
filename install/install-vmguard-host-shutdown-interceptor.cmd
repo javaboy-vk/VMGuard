@@ -1,75 +1,45 @@
 @echo off
 REM ================================================================================
-REM  VMGuard – Host Shutdown Interceptor Installer – v1.4
+REM  VMGuard – Host Shutdown Interceptor Installer (CMD Wrapper) – v1.8
 REM ================================================================================
 REM  Script Name : install-vmguard-host-shutdown-interceptor.cmd
 REM  Author      : javaboy-vk
-REM  Date        : 2026-01-14
-REM  Version     : 1.4
+REM  Date        : 2026-01-19
+REM  Version     : 1.8
 REM
 REM  PURPOSE
-REM    Install the VMGuard Host Shutdown Interceptor scheduled task using a full
-REM    XML task definition. The task identity and folder are owned by the XML
-REM    contract (URI = \Protepo\VMGuard-HostShutdown-Interceptor).
+REM    CMD wrapper to invoke the canonical PowerShell installer:
+REM      install\install-vmguard-host-shutdown-interceptor.ps1
 REM
-REM  RESPONSIBILITIES
-REM    - Remove any existing interceptor task (best effort)
-REM    - Install scheduled task from XML definition
-REM    - Ensure clean, deterministic OS-level wiring
+REM  WHY CMD
+REM    - Matches VMGuard operational tooling conventions
+REM    - Easy elevation (Run as Administrator)
+REM    - Avoids PS execution policy surprises for operators
 REM
-REM  NON-RESPONSIBILITIES
-REM    - Does NOT start/stop VMGuard services
-REM    - Does NOT validate VMware configuration
-REM
-REM  CHANGELOG
-REM    v1.1 – Fixed CMD header format
-REM    v1.2 – Switched to XML-based task installation
-REM    v1.3 – XML owns identity and folder via <URI>
-REM    v1.4 – Added mandatory /TN and hardened error handling
+REM  PORTABILITY
+REM    - No hard-coded drive paths
+REM    - VMGuard root is derived from this script location (install\ -> VMGuard\)
 REM ================================================================================
-setlocal enabledelayedexpansion
 
-set "TASK_NAME=\Protepo\VMGuard-HostShutdown-Interceptor"
-set "TASK_XML=P:\Scripts\VMGuard\install\vmguard-host-shutdown-interceptor-task.xml"
+setlocal ENABLEEXTENSIONS
+
+set "SCRIPT_DIR=%~dp0"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+
+set "INSTALLER_PS1=%SCRIPT_DIR%\install-vmguard-host-shutdown-interceptor.ps1"
+set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 echo ===========================================
-echo VMGuard Host Shutdown Interceptor Installer v1.4
+echo VMGuard Host Shutdown Interceptor Installer (Wrapper) v1.8
 echo ===========================================
-echo Task URI : %TASK_NAME%
-echo Task XML : %TASK_XML%
+echo Installer PS1: %INSTALLER_PS1%
 echo.
 
-if not exist "%TASK_XML%" (
-  echo [FAIL] Missing task XML:
-  echo        %TASK_XML%
-  echo        Install aborted.
+if not exist "%INSTALLER_PS1%" (
+  echo [FATAL] Missing PowerShell installer:
+  echo         %INSTALLER_PS1%
   exit /b 1
 )
 
-echo [INFO] Removing existing task if present...
-schtasks /Delete /TN "%TASK_NAME%" /F >nul 2>&1
-
-echo [INFO] Creating scheduled task from XML contract...
-schtasks /Create ^
-  /TN "%TASK_NAME%" ^
-  /XML "%TASK_XML%" ^
-  /F
-
-if errorlevel 1 (
-  echo [FAIL] Task creation failed.
-  echo        Verify XML and run from an elevated Admin console.
-  exit /b 1
-)
-
-echo [PASS] Host Shutdown Interceptor installed.
-echo [INFO] Verifying task registration...
-schtasks /Query /TN "%TASK_NAME%" /V /FO LIST
-
-if errorlevel 1 (
-  echo [FAIL] Task verification failed.
-  exit /b 1
-)
-
-echo.
-echo [DONE] Installation complete.
-exit /b 0
+"%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -File "%INSTALLER_PS1%"
+exit /b %ERRORLEVEL%

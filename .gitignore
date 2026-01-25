@@ -43,3 +43,7 @@ bin/
 *.state
 *.lock
 .env
+
+# File generated at runtime during installation of the interceptor
+# by replacing placeholders in the template file.
+conf/interceptor-task.xml
