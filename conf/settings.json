@@ -44,15 +44,13 @@
     }
   },
   "tasks": {
-    "tasks": {
-      "hostShutdownInterceptor": {
-        "uri": "\\Protepo\\VMGuard-HostShutdown-Interceptor"
-      },
-      "userShutdown": {
-        "folder": "\\Protepo",
-        "name": "VMGuard-Guard-User",
-        "script": "guard\\vm-smooth-shutdown.ps1"
-      }
+    "hostShutdownInterceptor": {
+      "uri": "\\Protepo\\VMGuard-HostShutdown-Interceptor"
+    },
+    "userShutdown": {
+      "folder": "\\Protepo",
+      "name": "VMGuard-Guard-User",
+      "script": "guard\\vm-smooth-shutdown.ps1"
     },
     "events": {
       "guardStop": "Global\\VMGuard_Guard_Stop",

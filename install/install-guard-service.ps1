@@ -1,11 +1,11 @@
 <#
 ================================================================================
- VMGuard – Guard Service – INSTALL – v2.4
+ VMGuard – Guard Service – INSTALL – v2.5
 ================================================================================
  Script Name : install-guard-service.ps1
  Author      : javaboy-vk
  Date        : 2026-01-23
- Version     : 2.4
+ Version     : 2.5
 
  PURPOSE
    Config-driven installer for the VMGuard Guard service.
@@ -164,7 +164,7 @@ function Write-ExternalStreamLine {
 }
 
 Write-InstallLog -Message $Separator
-Write-InstallLog -Message "VMGuard Guard Service INSTALL v2.3"
+Write-InstallLog -Message "VMGuard Guard Service INSTALL v2.5"
 Write-InstallLog -Message "Root   : $VMGuardRoot"
 Write-InstallLog -Message "Config : $VMGuardConfigPath"
 Write-InstallLog -Message "StopHelper : $StopHelper"
@@ -533,7 +533,7 @@ function Stop-VMGServiceBounded {
     Write-InstallLog -Message "Requesting existing service stop prior to update..."
 
     try {
-        Stop-Service -Name $Name -Force -ErrorAction Stop
+        Stop-Service -Name $Name -Force -ErrorAction Stop -NoWait
     } catch {
         Write-InstallLog -Level "WARN" -Message "Stop-Service failed (will attempt PID kill): $_"
     }
@@ -816,4 +816,5 @@ Write-InstallLog -Message "INSTALL COMPLETE"
 Write-InstallLog -Message $Separator
 
 exit 0
+
 

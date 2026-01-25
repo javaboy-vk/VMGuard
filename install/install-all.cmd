@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================================
-REM VMGuard – Install All (Host) – v1.2
+REM VMGuard - Install All (Host) - v1.7
 REM File: install-all.cmd
 REM Author: javaboy-vk
 REM Date  : 2026-01-23
@@ -21,8 +21,16 @@ REM       * Verifies services exist (sc query) and are RUNNING when required.
 REM       * Verifies interceptor task exists (schtasks /query).
 REM   - Uses Windows PowerShell explicit path.
 REM   - Prefers *.ps1 installers when present to avoid broken wrapper quoting.
+REM v1.3 CHANGE
+REM   - Remove caret line continuations to avoid label lookup errors in cmd.exe
+REM v1.5 CHANGE
+REM   - Rewrite file as ASCII to avoid label lookup issues after PowerShell edits
+REM v1.6 CHANGE
+REM   - Force ASCII encoding to prevent missing label errors
+REM v1.7 CHANGE
+REM   - Inline task validation to avoid ASSERT_TASK_EXISTS label lookup errors
 REM ============================================================================
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions
 
 REM --- Admin check (best-effort) ---
 net session >nul 2>&1
@@ -33,7 +41,7 @@ if errorlevel 1 (
 )
 
 set "INSTALL_DIR=%~dp0"
-for %%I in ("%INSTALL_DIR%\..") do set "VMG_ROOT=%%~fI"
+for %%I in ("%INSTALL_DIR%..") do set "VMG_ROOT=%%~fI"
 if "%VMG_ROOT:~-1%"=="\" set "VMG_ROOT=%VMG_ROOT:~0,-1%"
 
 set "PSEXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -44,39 +52,38 @@ if not exist "%PSEXE%" (
 
 echo.
 echo ===========================================
-echo  VMGuard Install-All v1.2
+echo  VMGuard Install-All v1.7
 echo ===========================================
 echo Root       : "%VMG_ROOT%"
 echo Install dir: "%INSTALL_DIR%"
 echo.
 
-call :RUN_STEP "Preshutdown Sentinel" ^
-  "%INSTALL_DIR%install-preshutdown-sentinel-service.ps1" ^
-  "%INSTALL_DIR%install-preshutdown-sentinel-service.cmd"
+call :RUN_STEP "Preshutdown Sentinel" "%INSTALL_DIR%install-preshutdown-sentinel-service.ps1" "%INSTALL_DIR%install-preshutdown-sentinel-service.cmd"
 if errorlevel 1 exit /b 10
 call :ASSERT_SERVICE_RUNNING "VMGuard-Preshutdown-Sentinel"
 if errorlevel 1 exit /b 110
 
-call :RUN_STEP "Guard Service" ^
-  "%INSTALL_DIR%install-guard-service.ps1" ^
-  "%INSTALL_DIR%install-guard-service.cmd"
+call :RUN_STEP "Guard Service" "%INSTALL_DIR%install-guard-service.ps1" "%INSTALL_DIR%install-guard-service.cmd"
 if errorlevel 1 exit /b 11
 call :ASSERT_SERVICE_RUNNING "VMGuard-Guard"
 if errorlevel 1 exit /b 111
 
-call :RUN_STEP "Watcher Service" ^
-  "%INSTALL_DIR%install-watcher-service.ps1" ^
-  "%INSTALL_DIR%install-watcher-service.cmd"
+call :RUN_STEP "Watcher Service" "%INSTALL_DIR%install-watcher-service.ps1" "%INSTALL_DIR%install-watcher-service.cmd"
 if errorlevel 1 exit /b 12
 call :ASSERT_SERVICE_RUNNING "VMGuard-Watcher"
 if errorlevel 1 exit /b 112
 
-call :RUN_STEP "Host Shutdown Interceptor" ^
-  "%INSTALL_DIR%install-vmguard-host-shutdown-interceptor.ps1" ^
-  "%INSTALL_DIR%install-vmguard-host-shutdown-interceptor.cmd"
+call :RUN_STEP "Host Shutdown Interceptor" "%INSTALL_DIR%install-vmguard-host-shutdown-interceptor.ps1" "%INSTALL_DIR%install-vmguard-host-shutdown-interceptor.cmd"
 if errorlevel 1 exit /b 13
-call :ASSERT_TASK_EXISTS "\Protepo\VMGuard-HostShutdown-Interceptor"
-if errorlevel 1 exit /b 113
+
+REM Inline task validation (avoid label lookup errors)
+set "TN=\Protepo\VMGuard-HostShutdown-Interceptor"
+schtasks /query /tn "%TN%" >nul 2>&1
+if errorlevel 1 (
+  echo [FATAL] Validation failed: scheduled task missing: %TN%
+  exit /b 113
+)
+echo [PASS] Validated scheduled task exists: %TN%
 
 echo.
 echo [PASS] VMGuard install-all completed successfully.
@@ -120,14 +127,4 @@ if errorlevel 1 (
   exit /b 1
 )
 echo [PASS] Validated service RUNNING: %SVC%
-exit /b 0
-
-:ASSERT_TASK_EXISTS
-set "TN=%~1"
-schtasks /query /tn "%TN%" >nul 2>&1
-if errorlevel 1 (
-  echo [FATAL] Validation failed: scheduled task missing: %TN%
-  exit /b 1
-)
-echo [PASS] Validated scheduled task exists: %TN%
 exit /b 0
